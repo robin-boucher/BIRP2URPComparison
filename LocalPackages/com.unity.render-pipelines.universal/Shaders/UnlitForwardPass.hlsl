@@ -1,0 +1,146 @@
+#ifndef URP_UNLIT_FORWARD_PASS_INCLUDED
+#define URP_UNLIT_FORWARD_PASS_INCLUDED
+
+#include "UnlitInput.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Unlit.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DistanceFog.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/LODCrossFade.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/Shaders/UnlitFeatures.hlsl"
+
+struct Attributes
+{
+    float4 positionOS : POSITION;
+    float2 uv : TEXCOORD0;
+
+    #if defined(DEBUG_DISPLAY)
+    float3 normalOS : NORMAL;
+    float4 tangentOS : TANGENT;
+    #endif
+
+    UNITY_VERTEX_INPUT_INSTANCE_ID
+};
+
+struct Varyings
+{
+    float2 uv : TEXCOORD0;
+    float4 positionCS : SV_POSITION;
+
+    #if defined(DEBUG_DISPLAY)
+    float3 positionWS : TEXCOORD2;
+    float3 normalWS : TEXCOORD3;
+    float3 viewDirWS : TEXCOORD4;
+    #endif
+
+    UNITY_VERTEX_INPUT_INSTANCE_ID
+    UNITY_VERTEX_OUTPUT_STEREO
+};
+
+void InitializeInputData(Varyings input, out InputData inputData)
+{
+    inputData = (InputData)0;
+
+    #if defined(DEBUG_DISPLAY)
+    inputData.positionWS = input.positionWS;
+    inputData.positionCS = input.positionCS;
+    inputData.normalWS = input.normalWS;
+    inputData.viewDirectionWS = input.viewDirWS;
+    #else
+    inputData.positionWS = float3(0, 0, 0);
+    inputData.normalWS = half3(0, 0, 1);
+    inputData.viewDirectionWS = half3(0, 0, 1);
+    #endif
+    inputData.shadowCoord = 0;
+    inputData.fogCoord = 0;
+    inputData.vertexLighting = half3(0, 0, 0);
+    inputData.bakedGI = half3(0, 0, 0);
+    inputData.normalizedScreenSpaceUV = 0;
+    inputData.shadowMask = half4(1, 1, 1, 1);
+
+    inputData.preExposureMultiplier = GetPreExposureMultiplier();
+}
+
+Varyings UnlitPassVertex(Attributes input)
+{
+    Varyings output = (Varyings)0;
+
+    UNITY_SETUP_INSTANCE_ID(input);
+    UNITY_TRANSFER_INSTANCE_ID(input, output);
+    UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
+    VertexPositionInputs vertexInput = GetVertexPositionInputs(input.positionOS.xyz);
+
+    output.positionCS = vertexInput.positionCS;
+    output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
+
+    #if defined(DEBUG_DISPLAY)
+    // normalWS and tangentWS already normalize.
+    // this is required to avoid skewing the direction during interpolation
+    // also required for per-vertex lighting and SH evaluation
+    VertexNormalInputs normalInput = GetVertexNormalInputs(input.normalOS, input.tangentOS);
+    half3 viewDirWS = GetWorldSpaceViewDir(vertexInput.positionWS);
+
+    // already normalized from normal transform to WS.
+    output.positionWS = vertexInput.positionWS;
+    output.normalWS = normalInput.normalWS;
+    output.viewDirWS = viewDirWS;
+    #endif
+
+    return output;
+}
+
+void UnlitPassFragment(
+    Varyings input
+    , out half4 outColor : SV_Target0
+#ifdef _WRITE_RENDERING_LAYERS
+    , out uint outRenderingLayers : SV_Target1
+#endif
+)
+{
+    UNITY_SETUP_INSTANCE_ID(input);
+    UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+
+    half2 uv = input.uv;
+    half4 texColor = SampleBaseMap(uv);
+    half3 color = texColor.rgb * _BaseColor.rgb;
+    half alpha = texColor.a * _BaseColor.a;
+
+    alpha = AlphaDiscard(alpha, _Cutoff);
+    if (UseAlphaModulate())
+        color = ApplyAlphaModulate(color, alpha);
+
+    LODFadeCrossFade(input.positionCS);
+
+    InputData inputData;
+    InitializeInputData(input, inputData);
+    SETUP_DEBUG_TEXTURE_DATA(inputData, UNDO_TRANSFORM_TEX(input.uv, _BaseMap));
+
+#ifdef _DBUFFER
+    if (!IsSurfaceTypeTransparent())
+        ApplyDecalToBaseColor(input.positionCS, color);
+#endif
+
+    half4 finalColor = UniversalFragmentUnlit(inputData, color, alpha);
+
+    if (ScreenSpaceOcclusionAvailable() && !IsSurfaceTypeTransparent())
+    {
+        float2 normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
+        AmbientOcclusionFactor aoFactor = GetScreenSpaceAmbientOcclusion(normalizedScreenSpaceUV, IsSurfaceTypeTransparent());
+        finalColor.rgb *= aoFactor.directAmbientOcclusion;
+    }
+
+    finalColor.rgb = ClampExposed(BlendDistanceFogExposed(finalColor.rgb, input.positionCS, inputData.preExposureMultiplier));
+#if defined(_TRANSPARENT_RECEIVE_FOG)
+    if (IsSurfaceTypeTransparent())
+        finalColor.rgb = MixVolumetricFog(finalColor.rgb, finalColor.a, _Blend, UseAlphaPremultiply(), input.positionCS);
+#endif
+    finalColor.a = OutputAlpha(finalColor.a, IsSurfaceTypeTransparent());
+
+    outColor = finalColor;
+
+#ifdef _WRITE_RENDERING_LAYERS
+    outRenderingLayers = EncodeMeshRenderingLayer();
+#endif
+}
+
+#endif

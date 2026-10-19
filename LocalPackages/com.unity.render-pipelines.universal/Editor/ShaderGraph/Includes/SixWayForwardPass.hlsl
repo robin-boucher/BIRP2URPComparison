@@ -1,0 +1,127 @@
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DistanceFog.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/LODCrossFade.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/VolumetricFogBlendMode.hlsl"
+
+void InitializeInputData(Varyings input, bool frontFace, out InputData inputData)
+{
+    inputData = (InputData)0;
+
+    inputData.positionWS = input.positionWS;
+
+    float signNormal = frontFace ? 1.0f : -1.0f;
+    inputData.normalWS = signNormal * input.normalWS;
+    inputData.normalWS = NormalizeNormalPerPixel(inputData.normalWS);
+
+    float crossSign = (input.tangentWS.w > 0.0 ? 1.0 : -1.0) * GetOddNegativeScale();
+    float3 bitangent = crossSign * cross(input.normalWS.xyz, input.tangentWS.xyz);
+    inputData.tangentToWorld = half3x3(input.tangentWS.xyz, bitangent.xyz, signNormal * input.normalWS);
+
+    inputData.viewDirectionWS = GetWorldSpaceNormalizeViewDir(input.positionWS);
+
+    #if USE_VERTEX_SHADOW_COORD_INTERPOLATOR
+        inputData.shadowCoord = ShadowCoordInterpolatorAvailable() ? input.shadowCoord : TransformWorldToShadowCoord(inputData.positionWS);
+    #else
+        inputData.shadowCoord = MainLightShadowsAvailable() ? TransformWorldToShadowCoord(inputData.positionWS) : float4(0, 0, 0, 0);
+    #endif
+
+    inputData.vertexLighting = input.fogFactorAndVertexLight.yzw;
+    inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
+
+    #if defined(DEBUG_DISPLAY)
+    #if USE_DYNAMICLIGHTMAP_UV_INTERPOLATOR
+    inputData.dynamicLightmapUV = input.dynamicLightmapUV.xy;
+    #endif
+    #if USE_LIGHTMAP_UV_INTERPOLATOR
+    inputData.staticLightmapUV = input.staticLightmapUV;
+    #else
+    inputData.vertexSH = input.sh;
+    #endif
+    #if defined(USE_APV_PROBE_OCCLUSION)
+    inputData.probeOcclusion = input.probeOcclusion;
+    #endif
+    inputData.positionCS = input.positionCS;
+    #endif
+
+    inputData.preExposureMultiplier = GetPreExposureMultiplier();
+}
+
+PackedVaryings vert(Attributes input)
+{
+    Varyings output = (Varyings)0;
+    output = BuildVaryings(input);
+    PackedVaryings packedOutput = (PackedVaryings)0;
+    packedOutput = PackVaryings(output);
+    return packedOutput;
+}
+
+void frag(
+    PackedVaryings packedInput
+    , out half4 outColor : SV_Target0
+    , bool frontFace : FRONT_FACE_SEMANTIC
+#ifdef _WRITE_RENDERING_LAYERS
+    , out uint outRenderingLayers : SV_Target1
+#endif
+
+)
+{
+    Varyings unpacked = UnpackVaryings(packedInput);
+    UNITY_SETUP_INSTANCE_ID(unpacked);
+    UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(unpacked);
+    SurfaceDescription surfaceDescription = BuildSurfaceDescription(unpacked);
+
+#if defined(_SURFACE_TYPE_TRANSPARENT)
+    bool isSurfaceTypeTransparent = true;
+#else
+    bool isSurfaceTypeTransparent = false;
+#endif
+
+#if defined(_ALPHATEST_ON)
+    half alpha = AlphaDiscard(surfaceDescription.Alpha, surfaceDescription.AlphaClipThreshold);
+#elif defined(_SURFACE_TYPE_TRANSPARENT)
+    half alpha = surfaceDescription.Alpha;
+#else
+    half alpha = half(1.0);
+#endif
+
+    LODFadeCrossFade(unpacked.positionCS);
+
+    InputData inputData;
+    InitializeInputData(unpacked, frontFace, inputData);
+
+    #ifdef VARYINGS_NEED_TEXCOORD0
+        SETUP_DEBUG_TEXTURE_DATA(inputData, unpacked.texCoord0);
+    #else
+        SETUP_DEBUG_TEXTURE_DATA_NO_UV(inputData);
+    #endif
+    SixWaySurfaceData surfaceData;
+    surfaceData.rightTopBack = surfaceDescription.RightTopBack * INV_PI;
+    surfaceData.leftBottomFront = surfaceDescription.LeftBottomFront * INV_PI;
+    surfaceData.emission = surfaceDescription.Emission;
+    surfaceData.baseColor = surfaceDescription.BaseColor;
+    surfaceData.occlusion = surfaceDescription.Occlusion;
+    surfaceData.alpha = saturate(alpha);
+    surfaceData.diffuseGIData0 = unpacked.diffuseGIData0;
+    surfaceData.diffuseGIData1 = unpacked.diffuseGIData1;
+    surfaceData.diffuseGIData2 = unpacked.diffuseGIData2;
+    if(!frontFace)
+        surfaceData.diffuseGIData2.xyz *= -1.0f;
+
+#if defined(_SIX_WAY_COLOR_ABSORPTION)
+    surfaceData.absorptionRange = INV_PI + saturate(surfaceDescription.AbsorptionStrength) * (1 - INV_PI);
+#endif
+
+    URP_LIGHT_ACCUM4 color = UniversalFragmentSixWay(inputData, surfaceData);
+    color.rgb = ClampExposed(inputData.preExposureMultiplier * BlendDistanceFog(color.rgb, unpacked.positionCS));
+#if defined(_SURFACE_TYPE_TRANSPARENT) && defined(_TRANSPARENT_RECEIVE_FOG)
+    color.rgb = MixVolumetricFog(color.rgb, color.a, VolumetricFogBlendModeFromDefines(), false, unpacked.positionCS);
+#endif
+
+    color.a = OutputAlpha(color.a, isSurfaceTypeTransparent);
+
+    outColor = color;
+
+#ifdef _WRITE_RENDERING_LAYERS
+    outRenderingLayers = EncodeMeshRenderingLayer();
+#endif
+}

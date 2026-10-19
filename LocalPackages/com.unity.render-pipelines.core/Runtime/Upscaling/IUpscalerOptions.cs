@@ -1,0 +1,275 @@
+#if ENABLE_UPSCALER_FRAMEWORK
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using UnityEditor;
+using UnityEngine.Scripting;
+using static UnityEngine.Rendering.DynamicResolutionHandler;
+
+namespace UnityEngine.Rendering
+{
+#nullable enable
+
+    /// <summary>
+    /// Base ScriptableObject for holding configuration data for a specific upscaler.
+    /// Concrete implementations (e.g., DLSSOptions, FSR2Options) should inherit from this.
+    /// </summary>
+    [Serializable]
+    public class UpscalerOptions : ScriptableObject
+    {
+        /// <summary>
+        /// The ID of the upscaler associated with these options.
+        /// </summary>
+        public string upscalerId
+        {
+            get => m_UpscalerId;
+            set => m_UpscalerId = value;
+        }
+
+        /// <summary>
+        /// Determines at which stage in the render pipeline the upscaling pass is injected.
+        /// </summary>
+        public UpsamplerScheduleType injectionPoint
+        {
+            get => m_InjectionPoint;
+            set => m_InjectionPoint = value;
+        }
+
+        /// <summary>
+        /// Selects how the render resolution is determined for this upscaler. Only meaningful for upscalers that
+        /// expose a quality mode (<see cref="IUpscaler.hasQualityMode"/>); for the others it is dormant and the
+        /// upscaler always behaves as <see cref="UpscalerResolutionMode.CustomScaling"/>.
+        /// </summary>
+        public UpscalerResolutionMode resolutionMode
+        {
+            get => m_ResolutionMode;
+            set => m_ResolutionMode = value;
+        }
+
+        /// <summary>
+        /// Reactive mask generation pass is executed only if current upscaler supports reactive mask and this option is true.
+        /// </summary>
+        public bool enableReactiveMaskPass => m_EnableReactiveMaskPass;
+
+        /// <summary>
+        /// Use max difference among R, G, B channels instead of length of delta of (R, G, B) when calculating reactivity.
+        /// </summary>
+        public bool reactiveMaskUseComponentMax => m_ReactiveMaskUseComponentMax;
+
+        /// <summary>
+        /// Scale factor for reactive mask values. It is applied before thresholding.
+        /// </summary>
+        public float reactiveMaskScale => m_ReactiveMaskScale;
+
+        /// <summary>
+        /// Set reactive mask value to zero or Reactive Mask Binary Value given the threshold.
+        /// </summary>
+        public bool applyReactiveMaskThreshold => m_ApplyReactiveMaskThreshold;
+
+        /// <summary>
+        /// Determines the threshold value for reactive mask values.
+        /// </summary>
+        public float reactiveMaskThreshold => m_ReactiveMaskThreshold;
+
+        /// <summary>
+        /// The value that reactive mask will have if it passes the threshold.
+        /// </summary>
+        public float reactiveMaskBinaryValue => m_ReactiveMaskBinaryValue;
+
+        [SerializeField, HideInInspector]
+        private string m_UpscalerId = "";
+
+        [SerializeField, HideInInspector] // hide in inspector for URP, HDRP manually renders it
+        private UpsamplerScheduleType m_InjectionPoint = UpsamplerScheduleType.BeforePost;
+
+        [SerializeField]
+        [Tooltip("Determines how the render resolution is selected: from the upscaler's quality preset (Quality " +
+                 "Mode), or driven by the pipeline's own render scaling / dynamic resolution (Custom Scaling). " +
+                 "Ignored by upscalers without a quality mode.")]
+        private UpscalerResolutionMode m_ResolutionMode = UpscalerResolutionMode.QualityMode;
+
+        [SerializeField]
+        [Tooltip("Execute reactive mask generation pass if current upscaler supports reactive mask.")]
+        private bool m_EnableReactiveMaskPass = false;
+
+        [SerializeField]
+        [Tooltip("Use max difference among R, G, B channels instead of length of delta of (R, G, B) when calculating reactivity. This option is applied before thresholding.")]
+        private bool m_ReactiveMaskUseComponentMax = false;
+
+        [SerializeField]
+        [Tooltip("Scale factor for reactive mask values. This option is applied before thresholding.")]
+        private float m_ReactiveMaskScale = 1.0f;
+
+        [SerializeField]
+        [Tooltip("Set reactive mask value to zero or Reactive Mask Binary Value given the threshold.")]
+        private bool m_ApplyReactiveMaskThreshold = false;
+
+        [SerializeField]
+        [Tooltip("Determines the threshold value for reactive mask values.")]
+        private float m_ReactiveMaskThreshold = 0.2f;
+
+        [SerializeField]
+        [Tooltip("The value that reactive mask will have if it passes the threshold.")]
+        private float m_ReactiveMaskBinaryValue = 1.0f;
+
+#if UNITY_EDITOR
+        /// <summary>
+        /// Validates and auto-populates the upscaler options list within a Render Pipeline Asset.
+        /// It ensures that the selected upscalers, and only those, have a corresponding Options sub-asset.
+        /// </summary>
+        /// <param name="parentRPAsset">The Render Pipeline Asset that will contain these options as sub-assets.</param>
+        /// <param name="optionsListProp">The SerializedProperty representing the list/array of UpscalerOptions.</param>
+        /// <param name="upscalerIds">IDs of the upscalers the asset selects. Entries that name no registered upscaler,
+        /// or one without an options type, are ignored.</param>
+        /// <returns>True if the property was modified (cleaned up or populated), false otherwise.</returns>
+        public static bool ValidateSerializedUpscalerOptionReferencesWithinRPAsset(ScriptableObject parentRPAsset, SerializedProperty optionsListProp, IReadOnlyList<string>? upscalerIds)
+        {
+            if (parentRPAsset == null)
+            {
+                Debug.LogError("[Auto-Populate] Parent asset is null.");
+                return false;
+            }
+            if (optionsListProp == null || !optionsListProp.isArray)
+            {
+                Debug.LogError($"[Auto-Populate] Provided SerializedProperty '{optionsListProp?.name ?? "null"}' is not a valid list for upscaler options.");
+                return false;
+            }
+
+            bool propertyModified = false;
+
+            // Track valid objects to identify orphans later
+            HashSet<Object> validReferencedObjects = new HashSet<Object>();
+            HashSet<Type> typesInList = new HashSet<Type>();
+
+            // The options the asset should hold, which is one per selected upscaler that declares an options type.
+            HashSet<Type> requiredOptionsTypes = new HashSet<Type>();
+            if (upscalerIds != null)
+            {
+                foreach (string upscalerId in upscalerIds)
+                {
+                    if (UpscalerRegistry.s_RegisteredUpscalers.TryGetValue(upscalerId, out var registered) && registered.OptionsType != null)
+                        requiredOptionsTypes.Add(registered.OptionsType);
+                }
+            }
+
+            // =================================================================================
+            // PASS 1: Clean up the Serialized List (Nulls & Duplicate Types)
+            // =================================================================================
+            for (int i = optionsListProp.arraySize - 1; i >= 0; i--)
+            {
+                SerializedProperty elementProp = optionsListProp.GetArrayElementAtIndex(i);
+                Object objRef = elementProp.objectReferenceValue;
+
+                // 1. Remove Nulls
+                if (objRef == null)
+                {
+                    // TODO: find a way to properly remove abandoned upscaler options.
+                    //       there's no good way to remove null options from the RPAsset with Delete/Destroy calls.
+                    //       one alternative is to copy non-null entries into memory and rewrite the RPAsset.
+                    //
+                    // optionsListProp.DeleteArrayElementAtIndex(i);
+                    // propertyModified = true;
+                    // Debug.LogWarning($"[RP Asset] Removed null upscaler option from active list in '{parentRPAsset.name}'.");
+
+                    continue;
+                }
+
+                Type objType = objRef.GetType();
+
+                // 2. Drop options whose upscaler is no longer selected, leaving Pass 2 to destroy the sub-asset.
+                if (!requiredOptionsTypes.Contains(objType))
+                {
+                    optionsListProp.DeleteArrayElementAtIndex(i);
+                    propertyModified = true;
+                }
+                // 3. Check for Duplicate Types within the active list
+                else if (typesInList.Contains(objType))
+                {
+                    optionsListProp.DeleteArrayElementAtIndex(i);
+                    propertyModified = true;
+                    Debug.LogWarning($"[RP Asset] Removed duplicate active reference of type {objType.Name} from list in '{parentRPAsset.name}'.");
+                    // We do NOT add to validReferencedObjects, so it will be caught in Pass 2 and destroyed.
+                }
+                else
+                {
+                    typesInList.Add(objType);
+                    validReferencedObjects.Add(objRef);
+                }
+            }
+
+            // =================================================================================
+            // PASS 2: Ghost Hunting (Destroy orphaned Sub-Assets)
+            // =================================================================================
+            // Load ALL assets contained within the file
+            string assetPath = AssetDatabase.GetAssetPath(parentRPAsset);
+            Object[] allSubAssets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+
+            List<Object> assetsToDestroy = new List<Object>();
+
+            foreach (Object subAsset in allSubAssets)
+            {
+                // We only care about UpscalerOptions. Ignore the main RPAsset or other embedded data.
+                // We also check if it is HideInHierarchy/HideInInspector, which usually indicates a sub-asset.
+                if (subAsset is UpscalerOptions)
+                {
+                    // If this asset exists in the file, but is NOT in our 'validReferencedObjects' set, it is an orphan.
+                    if (!validReferencedObjects.Contains(subAsset))
+                    {
+                        assetsToDestroy.Add(subAsset);
+                    }
+                }
+            }
+
+            if (assetsToDestroy.Count > 0)
+            {
+                foreach (Object orphan in assetsToDestroy)
+                {
+                    // Crucial: Object.DestroyImmediate with 'true' allows destroying assets in the Editor.
+                    // This removes the YAML block entirely.
+                    Object.DestroyImmediate(orphan, true);
+                }
+
+                propertyModified = true;
+            }
+
+            // =================================================================================
+            // PASS 3: Populate Missing Required Options
+            // =================================================================================
+            if (upscalerIds != null)
+            {
+                foreach (string upscalerId in upscalerIds)
+                {
+                    if (!UpscalerRegistry.s_RegisteredUpscalers.TryGetValue(upscalerId, out var registered))
+                        continue;
+
+                    Type? optionsType = registered.OptionsType;
+
+                    // Nothing to create for an upscaler without options, or one the list already covers.
+                    if (optionsType == null || typesInList.Contains(optionsType))
+                        continue;
+
+                    UpscalerOptions newOption = (UpscalerOptions)ScriptableObject.CreateInstance(optionsType);
+                    newOption.hideFlags = HideFlags.HideInHierarchy; // Standard for embedded sub-assets
+                    newOption.name = optionsType.Name; // Give it a clean name in the file
+                    newOption.upscalerId = upscalerId;
+
+                    // Add the physical object to the main asset file
+                    AssetDatabase.AddObjectToAsset(newOption, parentRPAsset);
+
+                    // Add the reference to the list
+                    optionsListProp.arraySize++;
+                    optionsListProp.GetArrayElementAtIndex(optionsListProp.arraySize - 1).objectReferenceValue = newOption;
+
+                    typesInList.Add(optionsType);
+                    propertyModified = true;
+                }
+            }
+
+            return propertyModified;
+        }
+#endif
+    }
+
+#nullable disable
+}
+#endif // ENABLE_UPSCALER_FRAMEWORK

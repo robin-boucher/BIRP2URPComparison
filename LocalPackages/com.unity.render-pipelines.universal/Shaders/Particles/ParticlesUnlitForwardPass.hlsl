@@ -1,0 +1,177 @@
+#ifndef UNIVERSAL_PARTICLES_UNLIT_FORWARD_PASS_INCLUDED
+#define UNIVERSAL_PARTICLES_UNLIT_FORWARD_PASS_INCLUDED
+
+#include "ParticlesUnlitInput.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Unlit.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DistanceFog.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/VolumetricFog.hlsl"
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Macros.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/Shaders/Particles/ParticlesUnlitFeatures.hlsl"
+
+void InitializeInputData(VaryingsParticle input, SurfaceData surfaceData, out InputData inputData)
+{
+    inputData = (InputData)0;
+    inputData.preExposureMultiplier = GetPreExposureMultiplier();
+
+    inputData.positionWS = input.positionWS.xyz;
+
+#if FEATURES_NORMALMAP
+    half3 viewDirWS = half3(input.normalWS.w, input.tangentWS.w, input.bitangentWS.w);
+    if (UseNormalMap())
+    {
+        inputData.tangentToWorld = half3x3(input.tangentWS.xyz, input.bitangentWS.xyz, input.normalWS.xyz);
+        inputData.normalWS = TransformTangentToWorld(surfaceData.normalTS, inputData.tangentToWorld);
+    }
+    else
+    {
+        inputData.normalWS = input.normalWS.xyz;
+    }
+#else
+    half3 viewDirWS = input.viewDirWS;
+    inputData.normalWS = input.normalWS;
+#endif
+
+    inputData.normalWS = NormalizeNormalPerPixel(inputData.normalWS, UseNormalMap());
+
+    viewDirWS = SafeNormalize(viewDirWS);
+
+    inputData.viewDirectionWS = viewDirWS;
+
+    inputData.vertexLighting = 0;
+#if defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2)
+    inputData.bakedGI = SAMPLE_GI(input.vertexSH,
+        GetAbsolutePositionWS(inputData.positionWS),
+        inputData.normalWS,
+        inputData.viewDirectionWS,
+        input.clipPos.xy,
+        input.probeOcclusion,
+        inputData.shadowMask);
+#else
+    inputData.bakedGI = SampleSHPixel(input.vertexSH, inputData.normalWS);
+#endif
+    inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.clipPos);
+    inputData.shadowMask = 1;
+    inputData.shadowCoord = 0;
+
+    #if defined(DEBUG_DISPLAY) && !defined(PARTICLES_EDITOR_META_PASS)
+    inputData.vertexSH = input.vertexSH;
+    #endif
+
+#if defined(DEBUG_DISPLAY) && defined(USE_APV_PROBE_OCCLUSION)
+    inputData.probeOcclusion = input.probeOcclusion;
+#endif
+}
+
+void InitializeSurfaceData(ParticleParams particleParams, out SurfaceData surfaceData)
+{
+    surfaceData = (SurfaceData)0;
+    half4 albedo = SampleAlbedo(UnityBuildTexture2DStructNoScaleNoTexelSize(_BaseMap), particleParams, UseAlphaPremultiply(), UseAlphaModulate());
+    half3 normalTS = half3(0.0, 0.0, 1.0);
+    if (UseNormalMap())
+        normalTS = SampleParticleNormalTS(particleParams.uv, particleParams.blendUv, UnityBuildTexture2DStructNoScaleNoTexelSize(_BumpMap), half(1.0));
+
+    #if defined (_DISTORTION_ON)
+    albedo.rgb = Distortion(albedo, normalTS, _DistortionStrengthScaled, _DistortionBlend, particleParams.projectedPosition);
+    #endif
+
+    half3 emission = UseEmission() ? BlendTexture(UnityBuildTexture2DStructNoScaleNoTexelSize(_EmissionMap), particleParams.uv, particleParams.blendUv).rgb * _EmissionColor.rgb : half3(0, 0, 0);
+
+    surfaceData.albedo = albedo.rgb;
+    surfaceData.specular = 0;
+    surfaceData.normalTS = normalTS;
+    surfaceData.emission = emission;
+    surfaceData.metallic = 0;
+    surfaceData.smoothness = 1;
+    surfaceData.occlusion = 1;
+
+    surfaceData.alpha = albedo.a;
+
+    surfaceData.clearCoatMask       = 0;
+    surfaceData.clearCoatSmoothness = 1;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+//                  Vertex and Fragment functions                            //
+///////////////////////////////////////////////////////////////////////////////
+
+VaryingsParticle vertParticleUnlit(AttributesParticle input)
+{
+    VaryingsParticle output = (VaryingsParticle)0;
+
+    UNITY_SETUP_INSTANCE_ID(input);
+    UNITY_TRANSFER_INSTANCE_ID(input, output);
+    UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
+    VertexPositionInputs vertexInput = GetParticleVertexPositionInputs(input.positionOS.xyz);
+    VertexNormalInputs normalInput = GetParticleVertexNormalInputs(input.normalOS, input.tangentOS);
+
+    half fogFactor = 0.0;
+
+    // position ws is used to compute eye depth in vertFading
+    output.positionWS.xyz = vertexInput.positionWS;
+    output.positionWS.w = fogFactor;
+    output.clipPos = vertexInput.positionCS;
+    output.color = GetParticleColor(input.color);
+
+    half3 viewDirWS = GetWorldSpaceNormalizeViewDir(vertexInput.positionWS);
+
+#if FEATURES_NORMALMAP
+    output.normalWS = half4(normalInput.normalWS, viewDirWS.x);
+    output.tangentWS = half4(normalInput.tangentWS, viewDirWS.y);
+    output.bitangentWS = half4(normalInput.bitangentWS, viewDirWS.z);
+#else
+    output.normalWS = half3(normalInput.normalWS);
+    output.viewDirWS = viewDirWS;
+#endif
+
+#if defined(_FLIPBOOKBLENDING_ON)
+#if defined(UNITY_PARTICLE_INSTANCING_ENABLED)
+    GetParticleTexcoords(output.texcoord, output.texcoord2AndBlend, input.texcoords.xyxy, 0.0);
+#else
+    GetParticleTexcoords(output.texcoord, output.texcoord2AndBlend, input.texcoords, input.texcoordBlend);
+#endif
+#else
+    GetParticleTexcoords(output.texcoord, input.texcoords.xy);
+#endif
+
+#if defined(_SOFTPARTICLES_ON) || defined(_FADING_ON) || defined(_DISTORTION_ON)
+    output.projectedPosition = vertexInput.positionNDC;
+#endif
+
+    return output;
+}
+
+half4 fragParticleUnlit(VaryingsParticle input) : SV_Target
+{
+    UNITY_SETUP_INSTANCE_ID(input);
+    UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+
+    ParticleParams particleParams;
+    InitParticleParams(input, particleParams);
+
+    SurfaceData surfaceData;
+    InitializeSurfaceData(particleParams, surfaceData);
+    InputData inputData;
+    InitializeInputData(input, surfaceData, inputData);
+    SETUP_DEBUG_TEXTURE_DATA_FOR_TEX(inputData, input.texcoord, _BaseMap);
+
+    half4 finalColor = UniversalFragmentUnlit(inputData, surfaceData);
+
+    if (ScreenSpaceOcclusionAvailable() && !IsSurfaceTypeTransparent())
+    {
+        float2 normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.clipPos);
+        AmbientOcclusionFactor aoFactor = GetScreenSpaceAmbientOcclusion(normalizedScreenSpaceUV, IsSurfaceTypeTransparent());
+        finalColor.rgb *= aoFactor.directAmbientOcclusion;
+    }
+
+    finalColor.rgb = ClampExposed(BlendDistanceFogExposed(finalColor.rgb, input.clipPos, inputData.preExposureMultiplier));
+    #if defined(_TRANSPARENT_RECEIVE_FOG)
+        if (IsSurfaceTypeTransparent())
+            finalColor.rgb = MixVolumetricFog(finalColor.rgb, finalColor.a, _Blend, UseAlphaPremultiply(), input.clipPos);
+    #endif
+    finalColor.a = OutputAlpha(finalColor.a, IsSurfaceTypeTransparent());
+
+    return finalColor;
+}
+
+#endif // UNIVERSAL_PARTICLES_UNLIT_FORWARD_PASS_INCLUDED

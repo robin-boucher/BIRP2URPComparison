@@ -1,0 +1,206 @@
+using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
+
+namespace UnityEditor.Rendering.Universal
+{
+    [CustomEditor(typeof(ScreenSpaceAmbientOcclusion))]
+    internal class ScreenSpaceAmbientOcclusionEditor : Editor, IOwningRendererDataConsumer
+    {
+        #region Serialized Properties
+        private SerializedProperty m_AOMethod;
+        private SerializedProperty m_Downsample;
+        private SerializedProperty m_AfterOpaque;
+        private SerializedProperty m_Source;
+        private SerializedProperty m_NormalQuality;
+        private SerializedProperty m_Intensity;
+        private SerializedProperty m_DirectLightingStrength;
+        private SerializedProperty m_Radius;
+        private SerializedProperty m_Falloff;
+        private SerializedProperty m_Samples;
+        private SerializedProperty m_BlurQuality;
+        #endregion
+
+        private bool m_IsInitialized = false;
+        private HeaderBool m_ShowQualitySettings;
+        private HeaderBool m_ShowDeprecatedSettings;
+        private bool m_ShowAfterOpaqueTileOnlyError;
+
+        private static readonly string k_AfterOpaqueIncompatibleWithTileOnlyMode = L10n.Tr("'After Opaque' is incompatible with the enabled 'Tile-Only Mode'. Disable After Opaque.", null);
+
+        /// <summary>
+        /// The renderer data that owns the feature when the inspector is drawn.
+        /// </summary>
+        public ScriptableRendererData owningRendererData { get; set; }
+
+        class HeaderBool
+        {
+            private string key;
+            public bool value;
+
+            internal HeaderBool(string _key, bool _default = false)
+            {
+                key = _key;
+                if (EditorPrefs.HasKey(key))
+                    value = EditorPrefs.GetBool(key);
+                else
+                    value = _default;
+                EditorPrefs.SetBool(key, value);
+            }
+
+            internal void SetValue(bool newValue)
+            {
+                value = newValue;
+                EditorPrefs.SetBool(key, value);
+            }
+        }
+
+
+        // Structs
+        private struct Styles
+        {
+            public static GUIContent AOMethod = L10n.TextContent("Method", "The noise method to use when calculating the Ambient Occlusion value.", null, null);
+            public static GUIContent Intensity = L10n.TextContent("Intensity", "The degree of darkness that Ambient Occlusion adds.", null, null);
+            public static GUIContent Radius = L10n.TextContent("Radius", "The radius around a given point, where Unity calculates and applies the effect.", null, null);
+            public static GUIContent Falloff = L10n.TextContent("Falloff Distance", "The distance from the camera where Ambient Occlusion should be visible.", null, null);
+            public static GUIContent DirectLightingStrength = L10n.TextContent("Direct Lighting Strength", "Controls how much the ambient occlusion affects direct lighting.", null, null);
+
+            public static GUIContent Quality = L10n.TextContent("Quality", "", null, null);
+            public static GUIContent Source = L10n.TextContent("Source", "The source of the normal vector values.\nDepth Normals: the feature uses the values generated in the Depth Normal prepass.\nDepth: the feature reconstructs the normal values using the depth buffer.\nIn the Deferred rendering path, the feature uses the G-buffer normals texture.", null, null);
+            public static GUIContent NormalQuality = new GUIContent("Normal Quality", "The number of depth texture samples that Unity takes when computing the normals. Low:1 sample, Medium: 5 samples, High: 9 samples.");
+            public static GUIContent Downsample = L10n.TextContent("Downsample", "With this option enabled, Unity downsamples the SSAO effect texture to improve performance. Each dimension of the texture is reduced by a factor of 2.", null, null);
+            public static GUIContent AfterOpaque = L10n.TextContent("After Opaque", "With this option enabled, Unity calculates and apply SSAO after the opaque pass to improve performance on mobile platforms with tiled-based GPU architectures. This is not physically correct.", null, null);
+            public static GUIContent BlurQuality = L10n.TextContent("Blur Quality", "High: Bilateral, Medium: Gaussian. Low: Kawase (Single Pass).", null, null);
+            public static GUIContent Samples = L10n.TextContent("Samples", "The number of samples that Unity takes when calculating the obscurance value. Low:4 samples, Medium: 8 samples, High: 12 samples.", null, null);
+        }
+
+        private void Init()
+        {
+            m_ShowQualitySettings = new HeaderBool($"SSAO.QualityFoldout", false);
+            m_ShowDeprecatedSettings = new HeaderBool("SSAO.DeprecatedFoldout", false);
+
+            SerializedProperty settings = serializedObject.FindProperty("m_Settings");
+
+            m_AOMethod = settings.FindPropertyRelative("AOMethod");
+            m_Intensity = settings.FindPropertyRelative("Intensity");
+            m_Radius = settings.FindPropertyRelative("Radius");
+            m_Falloff = settings.FindPropertyRelative("Falloff");
+            m_DirectLightingStrength = settings.FindPropertyRelative("DirectLightingStrength");
+
+            m_Source = settings.FindPropertyRelative("Source");
+            m_NormalQuality = settings.FindPropertyRelative("NormalSamples");
+            m_Downsample = settings.FindPropertyRelative("Downsample");
+            m_AfterOpaque = settings.FindPropertyRelative("AfterOpaque");
+            m_BlurQuality = settings.FindPropertyRelative("BlurQuality");
+            m_Samples = settings.FindPropertyRelative("Samples");
+
+            m_IsInitialized = true;
+        }
+
+        public override void OnInspectorGUI()
+        {
+            if (!m_IsInitialized)
+                Init();
+
+            EditorGUILayout.HelpBox(
+                "Screen Space Ambient Occlusion is controlled exclusively by the Screen Space Ambient Occlusion Volume Override. The fields below are inactive and shown only to aid in migrating to the volume system. You may copy these values into your Volume Override manually.",
+                MessageType.Info);
+
+            EditorGUILayout.Space(5);
+            m_ShowDeprecatedSettings.SetValue(EditorGUILayout.Foldout(m_ShowDeprecatedSettings.value, "Settings (Reference Only)"));
+            if (m_ShowDeprecatedSettings.value)
+            {
+                EditorGUI.indentLevel++;
+                DrawSsaoSettingsGUI(true);
+                EditorGUI.indentLevel--;
+            }
+        }
+
+        void DrawSsaoSettingsGUI(bool readOnly)
+        {
+            using (new EditorGUI.DisabledScope(readOnly))
+            {
+                EditorGUILayout.PropertyField(m_AOMethod, Styles.AOMethod);
+                EditorGUILayout.PropertyField(m_Intensity, Styles.Intensity);
+                EditorGUILayout.PropertyField(m_Radius, Styles.Radius);
+                EditorGUILayout.PropertyField(m_Falloff, Styles.Falloff);
+                m_DirectLightingStrength.floatValue = EditorGUILayout.Slider(Styles.DirectLightingStrength, m_DirectLightingStrength.floatValue, 0f, 1f);
+            }
+
+            // Foldout stays interactive in read-only mode so all values can be browsed.
+            m_ShowQualitySettings.SetValue(EditorGUILayout.Foldout(m_ShowQualitySettings.value, Styles.Quality));
+            if (m_ShowQualitySettings.value)
+            {
+                bool isDeferredRenderingMode = RendererIsDeferred();
+
+                EditorGUI.indentLevel++;
+
+                // Selecting source is not available for Deferred Rendering...
+                using (new EditorGUI.DisabledScope(readOnly || isDeferredRenderingMode))
+                    EditorGUILayout.PropertyField(m_Source, Styles.Source);
+
+                // We only enable this field when depth source is selected...
+                using (new EditorGUI.DisabledScope(readOnly || isDeferredRenderingMode || m_Source.enumValueIndex != (int)ScreenSpaceAmbientOcclusionSettings.DepthSource.Depth))
+                {
+                    EditorGUI.indentLevel++;
+                    EditorGUILayout.PropertyField(m_NormalQuality, Styles.NormalQuality);
+                    EditorGUI.indentLevel--;
+                }
+
+                using (new EditorGUI.DisabledScope(readOnly))
+                {
+                    EditorGUILayout.PropertyField(m_Downsample, Styles.Downsample);
+                    EditorGUILayout.PropertyField(m_AfterOpaque, Styles.AfterOpaque);
+                }
+
+                if (Event.current.type == EventType.Layout)
+                {
+                    var rendererData = (this as IOwningRendererDataConsumer).owningRendererData as UniversalRendererData;
+                    bool tileOnlyMode = rendererData != null && rendererData.tileOnlyMode;
+                    bool afterOpaque = m_AfterOpaque.boolValue;
+                    m_ShowAfterOpaqueTileOnlyError = tileOnlyMode && afterOpaque;
+                }
+
+                // Irrelevant in read-only mode where the fields no longer drive rendering.
+                if (!readOnly && m_ShowAfterOpaqueTileOnlyError)
+                    EditorGUILayout.HelpBox(k_AfterOpaqueIncompatibleWithTileOnlyMode, MessageType.Error, true);
+
+                using (new EditorGUI.DisabledScope(readOnly))
+                {
+                    EditorGUILayout.PropertyField(m_BlurQuality, Styles.BlurQuality);
+                    EditorGUILayout.PropertyField(m_Samples, Styles.Samples);
+                }
+
+                EditorGUI.indentLevel--;
+            }
+        }
+
+        private bool RendererIsDeferred()
+        {
+            ScreenSpaceAmbientOcclusion ssaoFeature = (ScreenSpaceAmbientOcclusion) target;
+            UniversalRenderPipelineAsset pipelineAsset = (UniversalRenderPipelineAsset) GraphicsSettings.currentRenderPipeline;
+
+            if (ssaoFeature == null || pipelineAsset == null)
+                return false;
+
+            // We have to find the renderer related to the SSAO feature, then test if it is in deferred mode.
+            var rendererDataList = pipelineAsset.m_RendererDataList;
+            for (int rendererIndex = 0; rendererIndex < rendererDataList.Length; ++rendererIndex)
+            {
+                var rendererData = rendererDataList[rendererIndex] as UniversalRendererData;
+                if (rendererData == null)
+                    continue;
+
+                if (!rendererData.usesDeferredLighting)
+                    continue;
+
+                var rendererFeatures = rendererData.rendererFeatures;
+                foreach (var feature in rendererFeatures)
+                    if (feature is ScreenSpaceAmbientOcclusion occlusion && occlusion == ssaoFeature)
+                        return true;
+            }
+
+            return false;
+        }
+    }
+}

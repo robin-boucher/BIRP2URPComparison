@@ -1,0 +1,123 @@
+#ifndef SG_TERRAIN_PBRFORWARDPASS_INC
+#define SG_TERRAIN_PBRFORWARDPASS_INC
+
+#include "TerrainVert.hlsl"
+
+void InitializeInputData(Varyings input, SurfaceDescription surfaceDescription, out InputData inputData)
+{
+    inputData = (InputData)0;
+
+    inputData.positionWS = input.positionWS;
+    inputData.preExposureMultiplier = GetPreExposureMultiplier();
+
+    CalculateTerrainNormalWS(input, surfaceDescription, inputData);
+
+    #if USE_VERTEX_SHADOW_COORD_INTERPOLATOR
+        inputData.shadowCoord = ShadowCoordInterpolatorAvailable() ? input.shadowCoord : TransformWorldToShadowCoord(inputData.positionWS);
+    #else
+        inputData.shadowCoord = MainLightShadowsAvailable() ? TransformWorldToShadowCoord(inputData.positionWS) : float4(0, 0, 0, 0);
+    #endif
+
+    inputData.vertexLighting = input.fogFactorAndVertexLight.yzw;
+
+    GIParams giParams = (GIParams)0;
+
+    #if USE_LIGHTMAP_UV_INTERPOLATOR
+    giParams.staticLightmapUV = input.staticLightmapUV;
+    #endif
+    #if USE_VERTEX_SH_INTERPOLATOR
+    giParams.vertexSH = input.sh;
+    #endif
+    #if USE_DYNAMICLIGHTMAP_UV_INTERPOLATOR
+    giParams.dynamicLightmapUV = input.dynamicLightmapUV.xy;
+    #endif
+
+    giParams.positionWS = inputData.positionWS;
+    giParams.normalWS = inputData.normalWS;
+    giParams.viewDirWS = inputData.viewDirectionWS;
+    giParams.positionSS = input.positionCS.xy;
+
+    InitializeBakedGI(giParams, inputData.bakedGI, inputData.shadowMask);
+
+    inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
+
+    #if defined(DEBUG_DISPLAY)
+    #if USE_DYNAMICLIGHTMAP_UV_INTERPOLATOR
+    inputData.dynamicLightmapUV = input.dynamicLightmapUV.xy;
+    #endif
+    #if USE_LIGHTMAP_UV_INTERPOLATOR
+    inputData.staticLightmapUV = input.staticLightmapUV;
+    #else
+    inputData.vertexSH = input.sh;
+    #endif
+    #endif
+}
+
+void frag(PackedVaryings packedInput,
+    out half4 color : SV_Target0
+#ifdef _WRITE_RENDERING_LAYERS
+    , out uint outRenderingLayers : SV_Target1
+#endif
+    )
+{
+    Varyings unpacked = UnpackVaryings(packedInput);
+    UNITY_SETUP_INSTANCE_ID(unpacked);
+    UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(unpacked);
+#ifdef ENABLE_TERRAIN_PERPIXEL_NORMAL
+    float2 sampleCoords = (unpacked.texCoord0.xy / _TerrainHeightmapRecipSize.zw + 0.5f) * _TerrainHeightmapRecipSize.xy;
+    float3 normalOS = SAMPLE_TEXTURE2D(_TerrainNormalmapTexture, sampler_TerrainNormalmapTexture, sampleCoords).rgb;
+    normalOS = normalize(normalOS * 2.0 - 1.0);
+
+    unpacked.normalWS = TransformObjectToWorldNormal(normalOS);
+
+    #ifdef VARYINGS_NEED_TANGENT_WS
+        float4 tangentOS = ConstructTerrainTangent(normalOS, float3(0.0, 0.0, 1.0));
+        unpacked.tangentWS = float4(TransformObjectToWorldNormal(normalize(tangentOS.xyz)), tangentOS.w);
+    #endif
+#endif
+
+    SurfaceDescription surfaceDescription = BuildSurfaceDescription(unpacked);
+    #ifdef _TERRAIN_SG_ALPHA_CLIP
+        AlphaDiscard(surfaceDescription.Alpha, surfaceDescription.AlphaClipThreshold);
+    #endif
+
+    InputData inputData;
+    InitializeInputData(unpacked, surfaceDescription, inputData);
+    SETUP_DEBUG_TEXTURE_DATA(inputData, unpacked.texCoord0.xy);
+
+    float3 specular = 0;
+    float metallic = surfaceDescription.Metallic;
+
+    half3 normalTS = half3(0, 0, 0);
+    #if defined(_NORMALMAP) && defined(_NORMAL_DROPOFF_TS)
+        normalTS = surfaceDescription.NormalTS;
+    #endif
+
+    SurfaceData surface;
+    surface.albedo              = surfaceDescription.BaseColor;
+    surface.metallic            = saturate(metallic);
+    surface.specular            = specular;
+    surface.smoothness          = saturate(surfaceDescription.Smoothness);
+    surface.occlusion           = surfaceDescription.Occlusion;
+    surface.emission            = surfaceDescription.Emission;
+    surface.alpha               = 1.0;
+    surface.normalTS            = normalTS;
+    surface.clearCoatMask       = 0;
+    surface.clearCoatSmoothness = 1;
+
+    surface.albedo = AlphaModulate(surface.albedo, surface.alpha);
+
+#if defined(_DBUFFER) && !defined(_SURFACE_TYPE_TRANSPARENT)
+    ApplyDecalToSurfaceData(unpacked.positionCS, surface, inputData);
+#endif
+
+    URP_LIGHT_ACCUM4 finalColor = UniversalFragmentPBR(inputData, surface);
+    SplatmapFinalColor(finalColor, unpacked.positionCS);
+
+#ifdef _WRITE_RENDERING_LAYERS
+    outRenderingLayers = EncodeMeshRenderingLayer();
+#endif
+    color = half4(ClampExposed(inputData.preExposureMultiplier * finalColor.rgb), 1.0h);
+}
+
+#endif
