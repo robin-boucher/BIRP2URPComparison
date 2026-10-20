@@ -7,3 +7,10 @@ ShaderImporter:
   userData: 
   assetBundleName: 
   assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 135162
+  packageName: 3D Game Kit Lite
+  packageVersion: 
+  assetPath: Assets/TextMesh Pro/Shaders/TMP_SDF-Mobile Overlay.shader
+  uploadId: 0

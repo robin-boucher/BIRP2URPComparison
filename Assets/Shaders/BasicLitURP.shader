@@ -19,6 +19,9 @@ Shader "Sample/BasicLitURP"
         
         // Toggle manual light distance attenuation quadratic falloff
         [Toggle] _MANUAL_BIRP_QUADRATIC_FALLOFF ("Manual Quadratic Light Falloff", Integer) = 0
+        
+        // Toggle manual light distance attenuation quadratic falloff
+        [Toggle] _ANGLE_ATTENUATION_BIRP_COOKIE ("Angle Attenuation BIRP Cookie", Integer) = 0
     }
     
     SubShader
@@ -57,6 +60,8 @@ Shader "Sample/BasicLitURP"
             #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS    // Additional light support (includes vertex lighting option)
             #pragma multi_compile _ _LIGHT_FALLOFF_QUADRATIC                        // Quadratic light falloff mode to match BIRP lighting
             #pragma multi_compile _ _MANUAL_BIRP_QUADRATIC_FALLOFF_ON               // Manual qudratic light falloff override
+            #pragma multi_compile _ _ANGLE_ATTENUATION_BIRP_COOKIE_ON               // Angle attenuation override to match BIRP "Soft" spot cookie texture
+            #pragma multi_compile_fragment _ _LIGHT_COOKIES                         // Light cookies
             #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS              // Additional light shadow support
             #pragma multi_compile_fragment _ _SHADOWS_SOFT                          // Soft shadow support
             #pragma multi_compile _ _LIGHT_LAYERS                                   // Light Layer support

@@ -114,6 +114,7 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints:
     - MANUAL_BIRP_QUADRATIC_FALLOFF: 0
+    - _ANGLE_ATTENUATION_BIRP_COOKIE: 0
     - _MANUAL_BIRP_QUADRATIC_FALLOFF: 1
     m_Floats:
     - _Amount: 0

@@ -6,3 +6,10 @@ TextScriptImporter:
   userData: 
   assetBundleName: 
   assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 135162
+  packageName: 3D Game Kit Lite
+  packageVersion: 
+  assetPath: Assets/TextMesh Pro/Resources/LineBreaking Leading Characters.txt
+  uploadId: 0

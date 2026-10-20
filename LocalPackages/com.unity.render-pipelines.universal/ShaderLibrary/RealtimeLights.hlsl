@@ -110,8 +110,40 @@ float DistanceAttenuation(float distanceSqr, half2 distanceAttenuation)
 #endif
 }
 
+#if _ANGLE_ATTENUATION_BIRP_COOKIE_ON
+
+// Distance from the spot's axis on its projection plane, normalized so the cone edge is 1.
+// This is the coordinate BIRP uses to look up the spot cookie.
+float NormalizedSpotConeRadius(float cosAngle, float cosOuterHalfAngle)
+{
+    float tanAngle          = sqrt(saturate(1.0 - cosAngle * cosAngle)) / max(cosAngle, 1e-4);
+    float tanOuterHalfAngle = sqrt(1.0 - cosOuterHalfAngle * cosOuterHalfAngle) / cosOuterHalfAngle;
+    return tanAngle / tanOuterHalfAngle;
+}
+
+#endif
+
 half AngleAttenuation(half3 spotDirection, half3 lightDirection, half2 spotAttenuation)
 {
+#if _ANGLE_ATTENUATION_BIRP_COOKIE_ON
+    
+    half SdotL = dot(spotDirection, lightDirection);
+    
+    // Point and directional lights have no cone: URP passes spotAttenuation = (0, 1).
+    if (spotAttenuation.x != 0.0)  // Is spot light
+    {
+        // URP packs x = 1 / (cosInner - cosOuter) and y = -cosOuter * x.
+        float cosOuterHalfAngle = -float(spotAttenuation.y) / float(spotAttenuation.x);
+        float coneRadius = NormalizedSpotConeRadius(SdotL, cosOuterHalfAngle);
+        return half(1.0 - smoothstep(0.66, 0.99, coneRadius));
+    }
+
+    // Not spot light, use default
+    half atten = saturate(SdotL * spotAttenuation.x + spotAttenuation.y);
+    return atten * atten;
+    
+#else
+    
     // Spot Attenuation with a linear falloff can be defined as
     // (SdotL - cosOuterAngle) / (cosInnerAngle - cosOuterAngle)
     // This can be rewritten as
@@ -123,6 +155,8 @@ half AngleAttenuation(half3 spotDirection, half3 lightDirection, half2 spotAtten
     half SdotL = dot(spotDirection, lightDirection);
     half atten = saturate(SdotL * spotAttenuation.x + spotAttenuation.y);
     return atten * atten;
+    
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////
