@@ -1658,6 +1658,7 @@ namespace UnityEngine.Rendering.Universal
             // This ensures that the baked punctual light intensity matches realtime intensity. (See GFXLIGHT-1755)
             const float piCorrection = Mathf.PI;
 
+            // For Unity 6.6 and earlier, set to FalloffType.Legacy, as Light Falloff Mode option is not available
             FalloffType punctualFalloff = IsQuadraticFalloffEnabled() ? FalloffType.Legacy : FalloffType.InverseSquared;
 
 #if UNITY_EDITOR

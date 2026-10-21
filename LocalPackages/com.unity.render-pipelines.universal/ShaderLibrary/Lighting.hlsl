@@ -72,10 +72,19 @@ half3 LightingPhysicallyBased(BRDFData brdfData, BRDFData brdfDataClearCoat,
         half3 radiance = lightColor * (lightAttenuation * NdotL);
 #endif
         half3 brdf = brdfData.diffuse;
+#if defined(_BIRP_STANDARD_BRDF_ON)
+        // BIRP Standard (BRDF1_Unity_PBS): Disney diffuse instead of Lambert.
+        brdf *= DisneyDiffuse_BIRP(brdfData, normalWS, lightDirectionWS, viewDirectionWS);
+#endif
         [branch]
         if (useSpecularHighlights)
         {
+#if defined(_BIRP_STANDARD_BRDF_ON)
+            // BIRP Standard: GGX * Smith-joint GGX * Schlick Fresnel, already multiplied by the specular color.
+            brdf += DirectBRDFSpecular_BIRP(brdfData, normalWS, lightDirectionWS, viewDirectionWS);
+#else
             brdf += brdfData.specular * DirectBRDFSpecular(brdfData, normalWS, lightDirectionWS, viewDirectionWS);
+#endif
 
             if (useClearCoat)
             {

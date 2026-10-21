@@ -24,6 +24,9 @@ Shader "Universal Render Pipeline/Lit"
         [ToggleOff] _ScreenSpaceReflections("Screen Space Reflections", Float) = 1.0
         [ToggleUI] _ScreenSpaceReflectionsContributeTransparent("Screen Space Reflections Contribute Transparent", Float) = 1.0
 
+        // Toggle BIRP Standard shader BRDF (Disney diffuse, Smith-joint GGX specular, Pow5 indirect Fresnel)
+        [Toggle] _BIRP_STANDARD_BRDF("BIRP Standard BRDF", Float) = 0.0
+
         _BumpScale("Scale", Float) = 1.0
         _BumpMap("Normal Map", 2D) = "bump" {}
 
@@ -136,6 +139,7 @@ Shader "Universal Render Pipeline/Lit"
             #pragma shader_feature_local_fragment _ENVIRONMENTREFLECTIONS_OFF
             #pragma shader_feature_local_fragment _SCREENSPACEREFLECTIONS_OFF
             #pragma shader_feature_local_fragment _SPECULAR_SETUP
+            #pragma multi_compile_fragment _ _BIRP_STANDARD_BRDF_ON                 // BIRP Standard shader BRDF override
 
             // -------------------------------------
             // Universal Pipeline keywords

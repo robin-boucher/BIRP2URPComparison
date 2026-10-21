@@ -104,6 +104,13 @@ namespace UnityEditor.Rendering.Universal.ShaderGUI
                     "When enabled, this Material will contribute to screen space reflections. This will include the object in the transparency-depth prepass.", null, null);
 
             /// <summary>
+            /// The text and tooltip for the BIRP Standard BRDF GUI.
+            /// </summary>
+            public static GUIContent birpStandardBRDFText =
+                L10n.TextContent("BIRP Standard BRDF",
+                    "When enabled, uses the Built-in Render Pipeline Standard shader BRDF (Disney diffuse, Smith-joint GGX specular, Pow5 environment Fresnel) to match its lighting.", null, null);
+
+            /// <summary>
             /// The text and tooltip for the height map GUI.
             /// </summary>
             public static GUIContent heightMapText = L10n.TextContent("Height Map",
@@ -247,6 +254,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGUI
             public MaterialProperty screenSpaceReflectionsContributeTransparent;
 
             /// <summary>
+            /// The MaterialProperty for the BIRP Standard BRDF override.
+            /// </summary>
+            public MaterialProperty birpStandardBRDF;
+
+            /// <summary>
             /// The MaterialProperty for enabling/disabling clear coat.
             /// </summary>
             public MaterialProperty clearCoat;  // Enable/Disable dummy property
@@ -292,7 +304,8 @@ namespace UnityEditor.Rendering.Universal.ShaderGUI
                 reflections = BaseShaderGUI.FindProperty("_EnvironmentReflections", properties, false);
                 screenSpaceReflections = BaseShaderGUI.FindProperty(Property.ScreenSpaceReflections, properties, false);
                 screenSpaceReflectionsContributeTransparent = BaseShaderGUI.FindProperty(Property.ScreenSpaceReflectionsContributeTransparent, properties, false);
-                clearCoat = BaseShaderGUI.FindProperty("_ClearCoat", properties, false);
+                birpStandardBRDF = BaseShaderGUI.FindProperty("_BIRP_STANDARD_BRDF", properties, false);
+                clearCoat =BaseShaderGUI.FindProperty("_ClearCoat", properties, false);
                 clearCoatMap = BaseShaderGUI.FindProperty("_ClearCoatMap", properties, false);
                 clearCoatMask = BaseShaderGUI.FindProperty("_ClearCoatMask", properties, false);
                 clearCoatSmoothness = BaseShaderGUI.FindProperty("_ClearCoatSmoothness", properties, false);
@@ -497,6 +510,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGUI
                     material.GetFloat("_EnvironmentReflections") == 0.0f);
             BaseShaderGUI.UpdateScreenSpaceReflectionsKeyword(material);
             BaseShaderGUI.UpdateScreenSpaceReflectionContributeTransparentPassState(material);
+            if (material.HasProperty("_BIRP_STANDARD_BRDF"))
+                CoreUtils.SetKeyword(material, "_BIRP_STANDARD_BRDF_ON",
+                    material.GetFloat("_BIRP_STANDARD_BRDF") != 0.0f);
             if (material.HasProperty("_OcclusionMap"))
                 CoreUtils.SetKeyword(material, "_OCCLUSIONMAP", material.GetTexture("_OcclusionMap"));
 

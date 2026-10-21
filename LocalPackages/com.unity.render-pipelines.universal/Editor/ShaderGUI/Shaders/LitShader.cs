@@ -72,6 +72,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGUI
             if (litProperties.screenSpaceReflectionsContributeTransparent != null && isTransparent)
                 materialEditor.ShaderProperty(litProperties.screenSpaceReflectionsContributeTransparent, LitGUI.Styles.screenSpaceReflectionsContributeTransparentText);
 
+            if (litProperties.birpStandardBRDF != null)
+                materialEditor.ShaderProperty(litProperties.birpStandardBRDF, LitGUI.Styles.birpStandardBRDFText);
+
             base.DrawAdvancedOptions(material);
         }
 

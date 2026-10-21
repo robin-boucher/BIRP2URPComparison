@@ -14,6 +14,9 @@
 #include "Packages/com.unity.render-pipelines.universal/Shaders/Utils/ClearCoat.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/Shaders/Utils/Emission.hlsl"
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/ParallaxMapping.hlsl"
+#if defined(_BIRP_STANDARD_BRDF_ON)
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl" // SRGBToLinear
+#endif
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DBuffer.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/Shaders/Utils/SurfaceType.hlsl"
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Macros.hlsl"
@@ -146,7 +149,13 @@ half4 GetSpecColor()            { return _SpecColor; }
 half4 GetEmissionColor()        { return _EmissionColor; }
 half GetCutoff()                { return _Cutoff; }
 half GetSmoothness()            { return _Smoothness; }
+#if defined(_BIRP_STANDARD_BRDF_ON)
+// BIRP Standard declares [Gamma] _Metallic, so in Linear color space the slider value is converted sRGB -> linear.
+// Only the slider is affected; a metallic map is sampled the same way in both pipelines.
+half GetMetallic()              { return FastSRGBToLinear(_Metallic); }
+#else
 half GetMetallic()              { return _Metallic; }
+#endif
 half GetBumpScale()             { return _BumpScale; }
 half GetParallax()              { return _Parallax; }
 half GetOcclusionStrength()     { return _OcclusionStrength; }

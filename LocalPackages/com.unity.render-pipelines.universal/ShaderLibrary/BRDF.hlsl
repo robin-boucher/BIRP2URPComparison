@@ -165,6 +165,78 @@ half3 EnvironmentBRDFClearCoat(BRDFData brdfData, half clearCoatMask, half3 indi
     return indirectSpecular * EnvironmentBRDFSpecular(brdfData, fresnelTerm) * clearCoatMask;
 }
 
+#if _BIRP_STANDARD_BRDF_ON
+
+// BIRP Standard (BRDF1_Unity_PBS) DisneyDiffuse: a multiplier on Lambert, direct lights only.
+half DisneyDiffuse_BIRP(BRDFData brdfData, half3 normalWS, half3 lightDirectionWS, half3 viewDirectionWS)
+{
+    half NdotL = saturate(dot(normalWS, lightDirectionWS));
+    half NdotV = abs(dot(normalWS, viewDirectionWS)); // BIRP default path
+    half LdotV = dot(lightDirectionWS, viewDirectionWS);
+
+    // Core applies rcp(1.03571) normalization that BIRP doesn't; undo it (folds to a constant).
+    return half(1.03571) * DisneyDiffuseNoPI(NdotV, NdotL, LdotV, brdfData.perceptualRoughness);
+}
+
+// Direct specular matching BIRP Standard (BRDF1_Unity_PBS):
+// GGX NDF * Smith-joint GGX visibility (approx) * Schlick Fresnel.
+// Caller still multiplies by lightColor * attenuation * NdotL (BIRP: specularTerm * nl).
+real V_SmithJointGGXApprox_BIRP(real NdotL, real NdotV, real roughness)
+{
+    real partLambdaV = GetSmithJointGGXPartLambdaVApprox(NdotV, roughness);
+
+    real a = roughness;
+
+    real lambdaV = NdotL * partLambdaV;
+    real lambdaL = NdotV * (NdotL * (1 - a) + a);
+
+    return 0.5 / (lambdaV + lambdaL + 1e-5f);
+}
+
+// BIRP GGXTerm. Unlike Core's D_GGX, the 1e-7 epsilon in the denominator is significant at the
+// highlight peak of smooth surfaces (d * d ~ 1e-6 at perceptual roughness 0.2), dimming it by a few percent.
+float D_GGX_BIRP(float NdotH, float roughness)
+{
+    float a2 = roughness * roughness;
+    float d = (NdotH * a2 - NdotH) * NdotH + 1.0f;
+    return INV_PI * a2 / (d * d + 1e-7f);
+}
+
+half3 DirectBRDFSpecular_BIRP(BRDFData brdfData, half3 normalWS, half3 lightDirectionWS, half3 viewDirectionWS)
+{
+    float3 lightDir = float3(lightDirectionWS);
+    float3 halfDir = SafeNormalize(lightDir + float3(viewDirectionWS));
+
+    float NdotL = saturate(dot(float3(normalWS), lightDir));
+    float NdotV = abs(dot(float3(normalWS), float3(viewDirectionWS))); // BIRP default path (UNITY_HANDLE_CORRECTLY_NEGATIVE_NDOTV == 0)
+    float NdotH = saturate(dot(float3(normalWS), halfDir));
+    half  LdotH = half(saturate(dot(lightDir, halfDir)));
+
+    // BIRP clamps roughness to 0.002
+    float a  = max(PerceptualRoughnessToRoughness(brdfData.perceptualRoughness), 0.002);
+
+    // SmithJointGGXVisibilityTerm (with epsilon from BIRP)
+    float V = V_SmithJointGGXApprox_BIRP(NdotL, NdotV, a);
+
+    // GGXTerm (with epsilon from BIRP)
+    float D = D_GGX_BIRP(NdotH, a);
+
+    half specularTerm = half(V * D) * PI;
+
+    #if REAL_IS_HALF
+    specularTerm = clamp(specularTerm - HALF_MIN, 0.0, 1000.0); // Prevent FP16 overflow on mobiles
+    #endif
+
+    // BIRP kills specular completely for a black specular color, to allow true Lambert lighting.
+    // F_Schlick alone would still give a grazing-angle highlight.
+    specularTerm *= any(brdfData.specular) ? half(1.0) : half(0.0);
+
+    // FresnelTerm(specColor, lh)
+    return specularTerm * F_Schlick(brdfData.specular, LdotH);
+}
+
+#endif
+
 // Computes the scalar specular term for Minimalist CookTorrance BRDF
 // NOTE: needs to be multiplied with reflectance f0, i.e. specular color to complete
 half DirectBRDFSpecular(BRDFData brdfData, half3 normalWS, half3 lightDirectionWS, half3 viewDirectionWS)
