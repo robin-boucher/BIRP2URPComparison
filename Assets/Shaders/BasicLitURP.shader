@@ -57,7 +57,7 @@ Shader "Sample/BasicLitURP"
             // Keywords from URP settings
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN // Main light shadows
             #pragma multi_compile _ SHADOWS_SHADOWMASK                              // Shadow mask
-            #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS    // Additional light support (includes vertex lighting option)
+            #pragma multi_compile _ _ADDITIONAL_LIGHTS                              // Additional light support
             #pragma multi_compile _ _LIGHT_FALLOFF_QUADRATIC                        // Quadratic light falloff mode to match BIRP lighting
             #pragma multi_compile _ _MANUAL_BIRP_QUADRATIC_FALLOFF_ON               // Manual qudratic light falloff override
             #pragma multi_compile _ _ANGLE_ATTENUATION_BIRP_COOKIE_ON               // Angle attenuation override to match BIRP "Soft" spot cookie texture
@@ -122,9 +122,6 @@ Shader "Sample/BasicLitURP"
 #endif
                 half fogFactor              : TEXCOORD7;   // Fog Factor 
                 
-#if _ADDITIONAL_LIGHTS_VERTEX
-                half4 vertexLighting        : TEXCOORD8;   // Vertex lighting 
-#endif
                 float4 positionCS           : SV_POSITION; // Clip-space position
 
                 UNITY_VERTEX_INPUT_INSTANCE_ID
@@ -164,35 +161,6 @@ Shader "Sample/BasicLitURP"
 
                 // Fog
                 output.fogFactor = ComputeFogFactor(positionCS.z);;
-
-                // Vertex lighting if enabled
-#if _ADDITIONAL_LIGHTS_VERTEX
-
-#if _LIGHT_LAYERS
-                // Get rendering layer if feature is enabled
-                uint renderingLayer = GetMeshRenderingLayer();
-#endif
-
-                half3 vertexLight = 0;
-                // Loop through additional lights to get vertex lighting
-                uint additionalLightCount = GetAdditionalLightsCount();
-                
-                // Macro provided by URP to loop through additional lights
-                LIGHT_LOOP_BEGIN(additionalLightCount)
-                    Light light = GetAdditionalLight(lightIndex, positionWS);
-
-#if _LIGHT_LAYERS
-                    // If rendering layers are enabled, only process light if renderer's layer is included
-                    if (IsMatchingLightLayer(light.layerMask, renderingLayer))
-#endif
-                    {
-                        vertexLight += LightingDiffuse(light, normalWS);
-                    }
-                LIGHT_LOOP_END
-
-                // Output fogFactor + vertexLight variable
-                output.vertexLighting = vertexLighting;
-#endif
                 
                 return output;
             }
@@ -248,7 +216,7 @@ Shader "Sample/BasicLitURP"
 #endif
                 {
                     // Diffuse
-                    mainLightDiffuseColor += LightingDiffuse(mainLight, inputData.normalWS) + inputData.vertexLighting;
+                    mainLightDiffuseColor += LightingDiffuse(mainLight, inputData.normalWS);
                     // Specular
                     mainLightSpecularColor += LightingSpecular(mainLight, inputData.normalWS, inputData.viewDirectionWS, surfaceData.specular, smoothness);
                 }
@@ -273,7 +241,7 @@ Shader "Sample/BasicLitURP"
 #endif
                     {
                         // Diffuse
-                        additionalLightsDiffuseColor += LightingDiffuse(light, inputData.normalWS) + inputData.vertexLighting;
+                        additionalLightsDiffuseColor += LightingDiffuse(light, inputData.normalWS);
                         // Specular
                         additionalLightsSpecularColor += LightingSpecular(light, inputData.normalWS, inputData.viewDirectionWS, surfaceData.specular, smoothness);
                     }
@@ -298,7 +266,7 @@ Shader "Sample/BasicLitURP"
 #endif
                     {
                         // Diffuse
-                        additionalLightsDiffuseColor += LightingDiffuse(light, inputData.normalWS) + inputData.vertexLighting;
+                        additionalLightsDiffuseColor += LightingDiffuse(light, inputData.normalWS);
                         // Specular
                         additionalLightsSpecularColor += LightingSpecular(light, inputData.normalWS, inputData.viewDirectionWS, surfaceData.specular, smoothness);
                     }
@@ -306,7 +274,7 @@ Shader "Sample/BasicLitURP"
 #endif
 
                 // Final color
-                half3 finalColor = (mainLightDiffuseColor + additionalLightsDiffuseColor + inputData.vertexLighting + inputData.bakedGI) * surfaceData.albedo + surfaceData.emission;
+                half3 finalColor = (mainLightDiffuseColor + additionalLightsDiffuseColor + inputData.bakedGI) * surfaceData.albedo + surfaceData.emission;
                 finalColor += (mainLightSpecularColor + additionalLightsSpecularColor);
 
                 return half4(finalColor, surfaceData.alpha);
@@ -363,12 +331,6 @@ Shader "Sample/BasicLitURP"
                 inputData.fogCoord = InitializeInputDataFog(float4(input.positionWS, 1.0), input.fogFactor);
                 // GI (SH)
                 inputData.bakedGI = SAMPLE_GI(0, input.vertexSH, normalWS);
-                // Vertex lighting
-#if _ADDITIONAL_LIGHTS_VERTEX
-                inputData.vertexLighting = input.vertexLighting;
-#else 
-                inputData.vertexLighting = 0;
-#endif
                 
                 // URP's SurfaceData can be used hold data
                 SurfaceData surfaceData = (SurfaceData)0;

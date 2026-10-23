@@ -10,7 +10,12 @@
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/BRDFData.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/BRDF.deprecated.hlsl"
 
+#if defined(_BIRP_STANDARD_BRDF_ON) && defined(UNITY_COLORSPACE_GAMMA)
+// BIRP unity_ColorSpaceDielectricSpec in Gamma space: 0.04 converted to sRGB.
+#define kDielectricSpec half4(0.220916301, 0.220916301, 0.220916301, 1.0 - 0.220916301)
+#else
 #define kDielectricSpec half4(0.04, 0.04, 0.04, 1.0 - 0.04) // standard dielectric reflectivity coef at incident angle (= 4%)
+#endif
 
 half ReflectivitySpecular(half3 specular)
 {
@@ -144,7 +149,10 @@ BRDFData CreateEmptyBRDFData()
 // Computes the specular term for EnvironmentBRDF
 half3 EnvironmentBRDFSpecular(BRDFData brdfData, half fresnelTerm)
 {
-#if (UNITY_PLATFORM_META_QUEST) // This is platform specific change targeting performance only
+#if defined(_BIRP_STANDARD_BRDF_ON) && defined(UNITY_COLORSPACE_GAMMA)
+    // BIRP Gamma space: 1-0.28*x^3 as approximation for (1/(x^4+1))^(1/2.2) on the domain [0;1]
+    half surfaceReduction = half(1.0) - half(0.28) * brdfData.roughness * brdfData.perceptualRoughness;
+#elif (UNITY_PLATFORM_META_QUEST) // This is platform specific change targeting performance only
     half surfaceReduction = half(1.0) / (brdfData.roughness2 + half(1.0));
 #else
     float surfaceReduction = 1.0 / (brdfData.roughness2 + 1.0);
@@ -221,7 +229,12 @@ half3 DirectBRDFSpecular_BIRP(BRDFData brdfData, half3 normalWS, half3 lightDire
     // GGXTerm (with epsilon from BIRP)
     float D = D_GGX_BIRP(NdotH, a);
 
-    half specularTerm = half(V * D) * PI;
+    float specularTermF = V * D * PI;
+#if defined(UNITY_COLORSPACE_GAMMA)
+    // BIRP Gamma space: sqrt in float before the half conversion, so it can't overflow on mobile.
+    specularTermF = sqrt(max(1e-4, specularTermF));
+#endif
+    half specularTerm = half(specularTermF);
 
     #if REAL_IS_HALF
     specularTerm = clamp(specularTerm - HALF_MIN, 0.0, 1000.0); // Prevent FP16 overflow on mobiles

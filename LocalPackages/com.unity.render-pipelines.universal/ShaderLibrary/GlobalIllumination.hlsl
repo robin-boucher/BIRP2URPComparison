@@ -532,6 +532,18 @@ half3 CalculateIrradianceFromReflectionProbes(half3 reflectVector, float3 positi
     return irradiance;
 }
 
+// Reflection color used when environment reflections are off.
+half3 GlossyEnvironmentFallbackColor()
+{
+#if defined(_BIRP_STANDARD_BRDF_ON)
+    // BIRP Standard with _GLOSSYREFLECTIONS_OFF uses the engine's average skybox reflection color,
+    // already in the active color space.
+    return unity_IndirectSpecColor.rgb;
+#else
+    return _GlossyEnvironmentColor.rgb;
+#endif
+}
+
 half3 GlossyEnvironmentReflection(half3 reflectVector, float3 positionWS, half perceptualRoughness, half occlusion, float2 normalizedScreenSpaceUV, bool useEnvironmentReflections)
 {
     half3 irradiance = half3(0, 0, 0);
@@ -551,7 +563,7 @@ half3 GlossyEnvironmentReflection(half3 reflectVector, float3 positionWS, half p
     {
         if (!useEnvironmentReflections)
         {
-            irradiance = _GlossyEnvironmentColor.rgb;
+            irradiance = GlossyEnvironmentFallbackColor();
         }
         else if (_REFLECTION_PROBE_BLENDING)
         {
@@ -598,7 +610,7 @@ half3 GlossyEnvironmentReflection(half3 reflectVector, float3 positionWS, half p
 
 half3 GlossyEnvironmentReflection(half3 reflectVector, half perceptualRoughness, half occlusion, bool useEnvironmentReflections)
 {
-    half3 irradiance = _GlossyEnvironmentColor.rgb;
+    half3 irradiance = GlossyEnvironmentFallbackColor();
 
     if (useEnvironmentReflections)
     {

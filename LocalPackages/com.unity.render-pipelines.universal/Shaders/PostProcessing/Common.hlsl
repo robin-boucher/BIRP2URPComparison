@@ -163,12 +163,12 @@ half3 ApplyColorGrading(half3 input, float postExposure, TEXTURE2D_PARAM(lutTex,
         }
 
         // ===== ADD: Convert to Gamma before applying LUT
-        //input.rgb = GetLinearToSRGB(input.rgb);
+        input.rgb = GetLinearToSRGB(input.rgb);
 
         input = ApplyLut2D(TEXTURE2D_ARGS(lutTex, lutSampler), input, lutParams);
 
         // ===== ADD: Convert back to Linear after applying LUT
-        //input.rgb = GetSRGBToLinear(input.rgb);
+        input.rgb = GetSRGBToLinear(input.rgb);
     }
     #endif
 
