@@ -314,12 +314,15 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: 'Sample of distance attenuation falloff mode setting in URP asset.  Set to Quadratic to match BIRP light falloff.
+  m_text: 'URP lit shader example. Distance attenuation falloff mode is set to Quadratic to match BIRP light falloff.
 
     _LIGHT_FALLOFF_QUADRATIC keyword must be added to shader.
 
 
-    See URP asset -> Lighting -> Light Falloff Mode.'
+    See URP asset -> Lighting -> Light Falloff Mode.
+
+
+    See shader at Shaders/BasicLitURP.'
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
